@@ -1,0 +1,19 @@
+# Git ignore for KurdTube AI Flutter project
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.swp
+*.swo
+.DS_Store
+*.iml
+.idea/
+.vscode/
+*.log
+local.properties
+*.jks
+*.keystore
+google-services.json

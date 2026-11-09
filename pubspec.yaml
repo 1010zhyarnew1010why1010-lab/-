@@ -1,0 +1,47 @@
+name: kurdtube_ai
+description: KurdTube AI - YouTube transcript translator to Central Kurdish (Sorani) using Gemini AI.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # YouTube player & data extraction
+  youtube_player_flutter: ^9.1.1
+  youtube_explode_dart: ^2.3.6
+
+  # Share intent from native apps
+  receive_sharing_intent: ^1.8.0
+
+  # Networking & AI
+  http: ^1.2.2
+  google_generative_ai: ^0.4.6
+
+  # Local storage
+  shared_preferences: ^2.3.3
+
+  # UI helpers
+  flutter_animate: ^4.5.0
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/fonts/
+  fonts:
+    - family: NotoNaskhArabic
+      fonts:
+        - asset: assets/fonts/NotoNaskhArabic-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/NotoNaskhArabic-Bold.ttf
+          weight: 700
