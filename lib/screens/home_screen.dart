@@ -187,10 +187,13 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _translationState = TranslationState(
-              status: TranslationStatus.error,
-              errorMessage: e.toString().replaceFirst('Exception: ', ''),
-            ));
+        setState(() {
+          _isUrlLoading = false;
+          _translationState = TranslationState(
+            status: TranslationStatus.error,
+            errorMessage: e.toString().replaceFirst('Exception: ', ''),
+          );
+        });
       }
     } finally {
       if (mounted) setState(() => _isUrlLoading = false);
@@ -332,9 +335,8 @@ class _HomeScreenState extends State<HomeScreen> {
           // URL input bar
           _buildUrlInputBar(),
 
-          // Status indicator
-          if (_translationState.status != TranslationStatus.idle &&
-              _translationState.status != TranslationStatus.completed)
+          // Status indicator (only displayed while actively extracting or translating)
+          if (_translationState.isLoading)
             _buildStatusBar(),
 
           // Error display
