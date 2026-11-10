@@ -12,7 +12,8 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # YouTube player & data extraction
-  youtube_player_flutter: ^9.1.1
+  # 9.0.4 is the last version compatible with a wide Dart SDK range
+  youtube_player_flutter: ^9.0.4
   youtube_explode_dart: ^2.3.6
 
   # Share intent from native apps
@@ -20,14 +21,14 @@ dependencies:
 
   # Networking & AI
   http: ^1.2.2
-  google_generative_ai: ^0.4.6
+  google_generative_ai: ^0.4.3
 
   # Local storage
-  shared_preferences: ^2.3.3
+  shared_preferences: ^2.3.2
 
   # UI helpers
   flutter_animate: ^4.5.0
-  url_launcher: ^6.3.1
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

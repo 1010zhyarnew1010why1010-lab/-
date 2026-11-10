@@ -15,52 +15,99 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Check out the repository
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Set up Java 17 (required for Android Gradle Plugin 8.x)
+      # ── 2. Java 17 (required for AGP 8.x) ───────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Set up Flutter stable channel
+      # ── 3. Latest stable Flutter (no version pin = always newest Dart/SDK) ───
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
           channel: 'stable'
           cache: true
 
-      # 4. Download font assets (Noto Naskh Arabic)
-      #    The fonts must be in assets/fonts/ before pub get.
+      - name: Print Flutter & Dart versions
+        run: flutter --version
+
+      # ── 4. Download Noto Naskh Arabic fonts ──────────────────────────────────
       - name: Download Noto Naskh Arabic fonts
         run: |
           mkdir -p assets/fonts
-          curl -L "https://github.com/google/fonts/raw/main/ofl/notonaskharabic/NotoNaskhArabic-Regular.ttf" \
+          curl -fL \
+            "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoNaskhArabic/hinted/ttf/NotoNaskhArabic-Regular.ttf" \
             -o assets/fonts/NotoNaskhArabic-Regular.ttf
-          curl -L "https://github.com/google/fonts/raw/main/ofl/notonaskharabic/NotoNaskhArabic-Bold.ttf" \
+          curl -fL \
+            "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoNaskhArabic/hinted/ttf/NotoNaskhArabic-Bold.ttf" \
             -o assets/fonts/NotoNaskhArabic-Bold.ttf
+          echo "Font sizes:"
+          du -sh assets/fonts/*.ttf
 
-      # 5. Install Flutter dependencies
+      # ── 5. Scaffold missing Android wrapper files ─────────────────────────────
+      # The repo was created without a local Flutter install, so it is missing
+      # gradlew, gradle-wrapper.jar, res/ mipmap icons, etc.
+      # Strategy:
+      #   a) Stash every custom file we care about
+      #   b) flutter create . -- generates the full scaffold
+      #   c) Restore all our custom files on top
+      - name: Generate missing Flutter Android scaffold
+        run: |
+          echo "── Stashing custom project files ──"
+          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest_custom.xml
+          cp android/app/build.gradle                 /tmp/app_build_custom.gradle
+          cp android/build.gradle                     /tmp/root_build_custom.gradle
+          cp android/settings.gradle                  /tmp/settings_custom.gradle
+          cp pubspec.yaml                             /tmp/pubspec_custom.yaml
+          tar -czf /tmp/lib_custom.tar.gz lib/
+          tar -czf /tmp/assets_custom.tar.gz assets/
+
+          echo "── Running flutter create (fills in gradlew, res/, etc.) ──"
+          flutter create . \
+            --project-name kurdtube_ai \
+            --org com.example \
+            --platforms android \
+            --overwrite
+
+          echo "── Restoring custom AndroidManifest, build.gradle, lib/, assets/ ──"
+          cp /tmp/AndroidManifest_custom.xml android/app/src/main/AndroidManifest.xml
+          cp /tmp/app_build_custom.gradle    android/app/build.gradle
+          cp /tmp/root_build_custom.gradle   android/build.gradle
+          cp /tmp/settings_custom.gradle     android/settings.gradle
+          cp /tmp/pubspec_custom.yaml        pubspec.yaml
+          rm -rf lib/ assets/
+          tar -xzf /tmp/lib_custom.tar.gz
+          tar -xzf /tmp/assets_custom.tar.gz
+
+          echo "── Scaffold verification ──"
+          echo "gradlew present:"; test -f gradlew && echo "YES" || echo "MISSING"
+          echo "gradle-wrapper.jar:"; test -f android/gradle/wrapper/gradle-wrapper.jar && echo "YES" || echo "MISSING"
+          echo "mipmap-mdpi:"; test -d android/app/src/main/res/mipmap-mdpi && echo "YES" || echo "MISSING"
+          echo "lib/main.dart:"; test -f lib/main.dart && echo "YES" || echo "MISSING"
+          echo "assets/fonts:"; ls assets/fonts/
+
+      # ── 6. Install Flutter dependencies ──────────────────────────────────────
       - name: Install Flutter packages
         run: flutter pub get
 
-      # 6. (Optional) Run analyzer — warnings don't fail the build
+      # ── 7. Analyze (non-blocking — warnings never abort the build) ───────────
       - name: Analyze code
-        run: flutter analyze --no-fatal-warnings || true
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
 
-      # 7. Build the debug APK (no keystore needed)
+      # ── 8. Build debug APK ───────────────────────────────────────────────────
       - name: Build debug APK
         run: flutter build apk --debug --verbose
 
-      # 8. Build the release APK (signed with debug key for sideloading)
+      # ── 9. Build release APK ─────────────────────────────────────────────────
       - name: Build release APK
         run: flutter build apk --release --verbose
 
-      # 9. Upload both APKs as workflow artifacts
+      # ── 10. Upload APKs as workflow artifacts ─────────────────────────────────
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -75,7 +122,7 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
 
-  # Optional: create a GitHub Release when a version tag is pushed
+  # ── Create a versioned GitHub Release on every v* tag push ───────────────────
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
@@ -92,20 +139,46 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Set up Flutter
+      - name: Set up Flutter (latest stable)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
           channel: 'stable'
           cache: true
 
       - name: Download fonts
         run: |
           mkdir -p assets/fonts
-          curl -L "https://github.com/google/fonts/raw/main/ofl/notonaskharabic/NotoNaskhArabic-Regular.ttf" \
+          curl -fL \
+            "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoNaskhArabic/hinted/ttf/NotoNaskhArabic-Regular.ttf" \
             -o assets/fonts/NotoNaskhArabic-Regular.ttf
-          curl -L "https://github.com/google/fonts/raw/main/ofl/notonaskharabic/NotoNaskhArabic-Bold.ttf" \
+          curl -fL \
+            "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoNaskhArabic/hinted/ttf/NotoNaskhArabic-Bold.ttf" \
             -o assets/fonts/NotoNaskhArabic-Bold.ttf
+
+      - name: Generate missing Flutter Android scaffold
+        run: |
+          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest_custom.xml
+          cp android/app/build.gradle                 /tmp/app_build_custom.gradle
+          cp android/build.gradle                     /tmp/root_build_custom.gradle
+          cp android/settings.gradle                  /tmp/settings_custom.gradle
+          cp pubspec.yaml                             /tmp/pubspec_custom.yaml
+          tar -czf /tmp/lib_custom.tar.gz lib/
+          tar -czf /tmp/assets_custom.tar.gz assets/
+
+          flutter create . \
+            --project-name kurdtube_ai \
+            --org com.example \
+            --platforms android \
+            --overwrite
+
+          cp /tmp/AndroidManifest_custom.xml android/app/src/main/AndroidManifest.xml
+          cp /tmp/app_build_custom.gradle    android/app/build.gradle
+          cp /tmp/root_build_custom.gradle   android/build.gradle
+          cp /tmp/settings_custom.gradle     android/settings.gradle
+          cp /tmp/pubspec_custom.yaml        pubspec.yaml
+          rm -rf lib/ assets/
+          tar -xzf /tmp/lib_custom.tar.gz
+          tar -xzf /tmp/assets_custom.tar.gz
 
       - name: Install packages
         run: flutter pub get
@@ -113,7 +186,7 @@ jobs:
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: KurdTube AI ${{ github.ref_name }}
@@ -126,10 +199,13 @@ jobs:
             ### Installation
             1. Download `app-release.apk` below.
             2. Enable *Install from unknown sources* on your Android device.
-            3. Install the APK.
-            4. Open the app → Settings → paste your Gemini API key.
+            3. Install the APK and open the app.
+            4. Tap ⚙️ Settings → paste your Gemini API key (free at [ai.google.dev](https://ai.google.dev)).
 
-            ### What's New
-            See commit history for changes in this release.
+            ### How to use
+            - Paste any YouTube URL in the input bar, or
+            - Share a video from the YouTube app → KurdTube AI appears in the Share Sheet.
+
+            The app extracts English captions, translates them to Central Kurdish (Sorani) via Gemini AI, and shows real-time synchronized RTL subtitles.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
