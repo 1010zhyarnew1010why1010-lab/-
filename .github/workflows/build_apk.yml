@@ -26,7 +26,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ── 3. Latest stable Flutter (no version pin) ─────────────────────────
+      # ── 3. Latest stable Flutter ─────────────────────────────────────────────
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -49,13 +49,7 @@ jobs:
           du -sh assets/fonts/*.ttf
 
       # ── 5. Scaffold Android wrapper files ─────────────────────────────────────
-      # Flutter 3.27+ creates Kotlin DSL (.kts) Gradle files and requires AGP 8.11+.
-      # Strategy:
-      #   a) Stash ONLY the files we must preserve (AndroidManifest, lib/, assets/, pubspec)
-      #   b) Delete all old Groovy .gradle files so flutter create generates fresh .kts ones
-      #   c) Run flutter create → produces correct AGP, gradlew, res/ icons, etc.
-      #   d) Restore only AndroidManifest.xml, lib/, assets/, pubspec.yaml
-      - name: Generate Flutter Android scaffold (AGP-compatible)
+      - name: Generate Flutter Android scaffold
         run: |
           echo "── Stashing files to preserve ──"
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest_custom.xml
@@ -63,14 +57,13 @@ jobs:
           tar -czf /tmp/lib_custom.tar.gz lib/
           tar -czf /tmp/assets_custom.tar.gz assets/
 
-          echo "── Removing old Groovy Gradle files (incompatible with Flutter 3.27+) ──"
+          echo "── Removing old Gradle files ──"
           rm -f android/build.gradle android/settings.gradle
           rm -f android/app/build.gradle
-          # Also remove .kts if any stale ones exist
           rm -f android/build.gradle.kts android/settings.gradle.kts
           rm -f android/app/build.gradle.kts
 
-          echo "── Running flutter create (generates AGP 8.11+ Kotlin DSL Gradle files) ──"
+          echo "── Running flutter create ──"
           flutter create . \
             --project-name kurdtube_ai \
             --org com.example \
@@ -84,32 +77,114 @@ jobs:
           tar -xzf /tmp/lib_custom.tar.gz
           tar -xzf /tmp/assets_custom.tar.gz
 
-          echo "── Scaffold verification ──"
-          echo -n "gradlew: "; test -f gradlew && echo "YES" || echo "MISSING"
-          echo -n "gradle-wrapper.jar: "; test -f android/gradle/wrapper/gradle-wrapper.jar && echo "YES" || echo "MISSING"
-          echo -n "mipmap-mdpi: "; test -d android/app/src/main/res/mipmap-mdpi && echo "YES" || echo "MISSING"
-          echo -n "settings.gradle.kts: "; test -f android/settings.gradle.kts && echo "YES" || echo "MISSING"
-          echo -n "app/build.gradle.kts: "; test -f android/app/build.gradle.kts && echo "YES" || echo "MISSING"
-          echo -n "lib/main.dart: "; test -f lib/main.dart && echo "YES" || echo "MISSING"
-          echo -n "assets/fonts: "; ls assets/fonts/ | tr '\n' ' '; echo
-
       # ── 6. Install Flutter packages ───────────────────────────────────────────
       - name: Install Flutter packages
         run: flutter pub get
 
-      # ── 7. Analyze (non-blocking) ─────────────────────────────────────────────
+      # ── 7. Patch plugins for AGP 8+ and ProGuard compatibility ────────────────
+      - name: Patch plugins for AGP 8+ and ProGuard compatibility
+        run: |
+          echo "── 1. Replacing proguard-android.txt with proguard-android-optimize.txt across all gradle files ──"
+          find ~/.pub-cache android -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's/proguard-android\.txt/proguard-android-optimize.txt/g' {} + || true
+
+          echo "── 2. Configuring gradle.properties ──"
+          mkdir -p android
+          touch android/gradle.properties
+          grep -q "android.useAndroidX" android/gradle.properties || echo "android.useAndroidX=true" >> android/gradle.properties
+          grep -q "android.enableJetifier" android/gradle.properties || echo "android.enableJetifier=true" >> android/gradle.properties
+          grep -q "android.suppressUnsupportedCompileSdk" android/gradle.properties || echo "android.suppressUnsupportedCompileSdk=35" >> android/gradle.properties
+
+          echo "── 3. Injecting namespaces for plugins missing namespace ──"
+          python3 - << 'EOF'
+          import os, re
+
+          pub_cache = os.path.expanduser("~/.pub-cache")
+          search_dirs = [pub_cache, "android"]
+          patched_count = 0
+
+          for base_dir in search_dirs:
+              if not os.path.exists(base_dir):
+                  continue
+              for root, dirs, files in os.walk(base_dir):
+                  for file in files:
+                      if file == "build.gradle":
+                          bg_path = os.path.join(root, file)
+                          try:
+                              with open(bg_path, "r", encoding="utf-8", errors="ignore") as f:
+                                  content = f.read()
+
+                              new_content = content.replace("proguard-android.txt", "proguard-android-optimize.txt")
+
+                              if "android {" in new_content and "namespace" not in new_content:
+                                  manifest_path = os.path.join(root, "src", "main", "AndroidManifest.xml")
+                                  pkg = None
+                                  if os.path.exists(manifest_path):
+                                      with open(manifest_path, "r", encoding="utf-8", errors="ignore") as mf:
+                                          m = re.search(r'package\s*=\s*["\']([^"\']+)["\']', mf.read())
+                                          if m:
+                                              pkg = m.group(1)
+                                  if not pkg:
+                                      if "flutter_inappwebview" in root:
+                                          pkg = "com.pichillilorenzo.flutter_inappwebview_android"
+                                      else:
+                                          parent_name = os.path.basename(os.path.dirname(root) if os.path.basename(root) == "android" else root)
+                                          clean_name = re.sub(r'[^a-zA-Z0-9_]', '_', parent_name)
+                                          pkg = f"com.flutter_plugin.{clean_name}"
+
+                                  new_content = new_content.replace("android {", f"android {{\n    namespace '{pkg}'", 1)
+                                  print(f"Injected namespace '{pkg}' into {bg_path}")
+                                  patched_count += 1
+
+                              if new_content != content:
+                                  with open(bg_path, "w", encoding="utf-8") as f:
+                                      f.write(new_content)
+                          except Exception as e:
+                              print(f"Warning patching {bg_path}: {e}")
+
+          print(f"Total plugins patched with namespace: {patched_count}")
+          EOF
+
+          echo "── 4. Disabling minify/shrink and ensuring minSdk >= 21 in app build.gradle ──"
+          python3 - << 'EOF'
+          import os, re
+          app_gradle_kts = "android/app/build.gradle.kts"
+          app_gradle = "android/app/build.gradle"
+
+          if os.path.exists(app_gradle_kts):
+              with open(app_gradle_kts, "r", encoding="utf-8") as f:
+                  c = f.read()
+              c = re.sub(r'isMinifyEnabled\s*=\s*true', 'isMinifyEnabled = false', c)
+              c = re.sub(r'isShrinkResources\s*=\s*true', 'isShrinkResources = false', c)
+              # Ensure minSdk is at least 21
+              c = re.sub(r'minSdk\s*=\s*flutter\.minSdkVersion', 'minSdk = 21', c)
+              with open(app_gradle_kts, "w", encoding="utf-8") as f:
+                  f.write(c)
+              print("Patched app/build.gradle.kts (minSdk=21, minify disabled)")
+
+          if os.path.exists(app_gradle):
+              with open(app_gradle, "r", encoding="utf-8") as f:
+                  c = f.read()
+              c = re.sub(r'minifyEnabled\s+true', 'minifyEnabled false', c)
+              c = re.sub(r'shrinkResources\s+true', 'shrinkResources false', c)
+              c = re.sub(r'minSdkVersion\s+flutter\.minSdkVersion', 'minSdkVersion 21', c)
+              with open(app_gradle, "w", encoding="utf-8") as f:
+                  f.write(c)
+              print("Patched app/build.gradle (minSdk=21, minify disabled)")
+          EOF
+
+      # ── 8. Analyze (non-blocking) ─────────────────────────────────────────────
       - name: Analyze code
         run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
 
-      # ── 8. Build debug APK ────────────────────────────────────────────────────
+      # ── 9. Build debug APK ────────────────────────────────────────────────────
       - name: Build debug APK
         run: flutter build apk --debug
 
-      # ── 9. Build release APK ──────────────────────────────────────────────────
+      # ── 10. Build release APK ─────────────────────────────────────────────────
       - name: Build release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-shrink
 
-      # ── 10. Upload APKs ───────────────────────────────────────────────────────
+      # ── 11. Upload APKs ───────────────────────────────────────────────────────
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -132,60 +207,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - name: Download Release APK artifact
+        uses: actions/download-artifact@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Set up Flutter (latest stable)
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Download fonts
-        run: |
-          mkdir -p assets/fonts
-          curl -fL \
-            "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoNaskhArabic/hinted/ttf/NotoNaskhArabic-Regular.ttf" \
-            -o assets/fonts/NotoNaskhArabic-Regular.ttf
-          curl -fL \
-            "https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io/fonts/NotoNaskhArabic/hinted/ttf/NotoNaskhArabic-Bold.ttf" \
-            -o assets/fonts/NotoNaskhArabic-Bold.ttf
-
-      - name: Generate Flutter Android scaffold (AGP-compatible)
-        run: |
-          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest_custom.xml
-          cp pubspec.yaml /tmp/pubspec_custom.yaml
-          tar -czf /tmp/lib_custom.tar.gz lib/
-          tar -czf /tmp/assets_custom.tar.gz assets/
-
-          rm -f android/build.gradle android/settings.gradle
-          rm -f android/app/build.gradle
-          rm -f android/build.gradle.kts android/settings.gradle.kts
-          rm -f android/app/build.gradle.kts
-
-          flutter create . \
-            --project-name kurdtube_ai \
-            --org com.example \
-            --platforms android \
-            --overwrite
-
-          cp /tmp/AndroidManifest_custom.xml android/app/src/main/AndroidManifest.xml
-          cp /tmp/pubspec_custom.yaml pubspec.yaml
-          rm -rf lib/ assets/
-          tar -xzf /tmp/lib_custom.tar.gz
-          tar -xzf /tmp/assets_custom.tar.gz
-
-      - name: Install packages
-        run: flutter pub get
-
-      - name: Build release APK
-        run: flutter build apk --release
+          name: KurdTubeAI-release-apk
+          path: release-apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -193,7 +219,7 @@ jobs:
           name: KurdTube AI ${{ github.ref_name }}
           draft: false
           prerelease: false
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: release-apk/app-release.apk
           body: |
             ## KurdTube AI ${{ github.ref_name }}
 
