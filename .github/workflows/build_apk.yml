@@ -144,7 +144,7 @@ jobs:
           print(f"Total plugins patched with namespace: {patched_count}")
           EOF
 
-          echo "── 4. Disabling minify/shrink and ensuring minSdk >= 21 in app build.gradle ──"
+          echo "── 4. Disabling minify/shrink and ensuring minSdk >= 21, compileSdk = 37 in app build.gradle ──"
           python3 - << 'EOF'
           import os, re
           app_gradle_kts = "android/app/build.gradle.kts"
@@ -155,11 +155,11 @@ jobs:
                   c = f.read()
               c = re.sub(r'isMinifyEnabled\s*=\s*true', 'isMinifyEnabled = false', c)
               c = re.sub(r'isShrinkResources\s*=\s*true', 'isShrinkResources = false', c)
-              # Ensure minSdk is at least 21
               c = re.sub(r'minSdk\s*=\s*flutter\.minSdkVersion', 'minSdk = 21', c)
+              c = re.sub(r'compileSdk\s*=\s*flutter\.compileSdkVersion', 'compileSdk = 37', c)
               with open(app_gradle_kts, "w", encoding="utf-8") as f:
                   f.write(c)
-              print("Patched app/build.gradle.kts (minSdk=21, minify disabled)")
+              print("Patched app/build.gradle.kts (minSdk=21, compileSdk=37, minify disabled)")
 
           if os.path.exists(app_gradle):
               with open(app_gradle, "r", encoding="utf-8") as f:
@@ -167,9 +167,10 @@ jobs:
               c = re.sub(r'minifyEnabled\s+true', 'minifyEnabled false', c)
               c = re.sub(r'shrinkResources\s+true', 'shrinkResources false', c)
               c = re.sub(r'minSdkVersion\s+flutter\.minSdkVersion', 'minSdkVersion 21', c)
+              c = re.sub(r'compileSdkVersion\s+flutter\.compileSdkVersion', 'compileSdkVersion 37', c)
               with open(app_gradle, "w", encoding="utf-8") as f:
                   f.write(c)
-              print("Patched app/build.gradle (minSdk=21, minify disabled)")
+              print("Patched app/build.gradle (minSdk=21, compileSdk=37, minify disabled)")
           EOF
 
       # ── 8. Analyze (non-blocking) ─────────────────────────────────────────────
