@@ -45,7 +45,11 @@ class _WatchScreenState extends State<WatchScreen> {
   void initState() {
     super.initState();
     _initPlayer();
-    _checkAndStartBackgroundTranslation();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _checkAndStartBackgroundTranslation();
+      }
+    });
   }
 
   void _checkAndStartBackgroundTranslation() {

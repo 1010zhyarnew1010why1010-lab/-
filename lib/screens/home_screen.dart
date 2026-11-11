@@ -46,7 +46,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isTranslating = false;
 
   // Translation State
-  TranslationState _translationState = const TranslationState();
   List<SubtitleSegment> _activeSegments = [];
   bool _cancelRequested = false;
 

@@ -59,7 +59,7 @@ class _TranslationProgressScreenState extends State<TranslationProgressScreen>
           textDirection: TextDirection.rtl,
           child: PopScope(
             canPop: true,
-            onPopInvokedWithResult: (didPop, result) {
+            onPopInvoked: (didPop) {
               if (didPop) {
                 widget.onCancel();
               }

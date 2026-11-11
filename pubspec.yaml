@@ -1,7 +1,7 @@
 name: kurdtube_ai
 description: Zhirnoos (ژێرنووس) - YouTube transcript translator to Kurdish (Sorani & Kurmanji) using Gemini AI.
 publish_to: 'none'
-version: 2.0.1+3
+version: 2.0.3+4
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
