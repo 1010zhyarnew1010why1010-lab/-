@@ -45,6 +45,102 @@ CRITICAL SUBTITLE TRANSLATION RULES:
 ''';
   }
 
+  /// Translates only the first batch (e.g. 15 segments) for ultra-fast instant playback.
+  Future<void> translateFirstBatch(
+    List<SubtitleSegment> segments, {
+    int batchSize = 15,
+    String videoTitle = '',
+  }) async {
+    if (segments.isEmpty) return;
+    final firstBatch = segments.take(batchSize).toList();
+    final translatedItems = await _translateBatchWithRetry(
+      firstBatch,
+      videoTitle: videoTitle,
+      previousContext: '',
+    );
+
+    for (final item in translatedItems) {
+      final index = item['index'] as int?;
+      final text = item['text'] as String?;
+      if (index != null && text != null && text.trim().isNotEmpty) {
+        final matchIdx = segments.indexWhere((s) => s.index == index);
+        if (matchIdx != -1) {
+          segments[matchIdx].translatedText = text.trim();
+        }
+      }
+    }
+  }
+
+  /// Translates the remaining batches sequentially in the background while user watches.
+  Future<void> translateRemainingBatches(
+    List<SubtitleSegment> segments, {
+    int startIndex = 15,
+    int batchSize = 15,
+    String videoTitle = '',
+    required void Function(int completedBatches, int totalBatches)
+        onBatchComplete,
+    bool Function()? isCancelled,
+  }) async {
+    if (segments.length <= startIndex) return;
+
+    final remainingSegments = segments.sublist(startIndex);
+    final batches = _splitIntoBatches(remainingSegments, batchSize);
+    final totalBatches = batches.length + 1; // +1 for first batch
+
+    for (int i = 0; i < batches.length; i++) {
+      if (isCancelled != null && isCancelled()) break;
+
+      final batch = batches[i];
+      final currentOverallBatchIndex = i + 2;
+
+      // Provide context from the previous 2 translated segments
+      String previousContext = '';
+      final firstIdxInThisBatch = batch.first.index;
+      final prevSegments = segments
+          .where((s) =>
+              s.index < firstIdxInThisBatch &&
+              s.translatedText != null &&
+              s.translatedText!.isNotEmpty)
+          .toList();
+      if (prevSegments.isNotEmpty) {
+        final lastTwo = prevSegments.length >= 2
+            ? prevSegments.sublist(prevSegments.length - 2)
+            : prevSegments;
+        final lines = lastTwo
+            .map((s) =>
+                'Segment ${s.index} (EN: "${s.originalText}" -> KU: "${s.translatedText}")')
+            .join(' | ');
+        previousContext =
+            'PREVIOUS_SUBTITLE_CONTEXT (Do not re-translate): $lines';
+      }
+
+      try {
+        final translatedItems = await _translateBatchWithRetry(
+          batch,
+          videoTitle: videoTitle,
+          previousContext: previousContext,
+        );
+
+        if (isCancelled != null && isCancelled()) break;
+
+        for (final item in translatedItems) {
+          final index = item['index'] as int?;
+          final text = item['text'] as String?;
+          if (index != null && text != null && text.trim().isNotEmpty) {
+            final matchIdx = segments.indexWhere((s) => s.index == index);
+            if (matchIdx != -1) {
+              segments[matchIdx].translatedText = text.trim();
+            }
+          }
+        }
+
+        onBatchComplete(currentOverallBatchIndex, totalBatches);
+      } catch (_) {
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+  }
+
   /// Translates segments in batches of 25 with sliding previous context.
   Future<void> translateSegments(
     List<SubtitleSegment> segments, {

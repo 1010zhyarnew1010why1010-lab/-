@@ -1,5 +1,6 @@
 // lib/screens/home_screen.dart
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
@@ -216,6 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
             builder: (_) => WatchScreen(
               item: existingHistory,
               subtitleFontSize: _activeFontSize,
+              apiKey: _settings.geminiApiKey,
               onRetranslate: () => _executeTranslation(videoId, forceNew: true),
             ),
           ),
@@ -231,54 +233,83 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _isTranslating = true;
       _cancelRequested = false;
-      _translationState = const TranslationState(
-        status: TranslationStatus.verifyingLink,
-      );
     });
+
+    final progressNotifier = ValueNotifier<TranslationState>(
+      const TranslationState(
+        status: TranslationStatus.verifyingLink,
+        currentProgress: 0.15, // Step 1 Done immediately: 15%
+      ),
+    );
+
+    bool isProgressScreenActive = true;
 
     // Show Progress Screen
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => TranslationProgressScreen(
-          state: _translationState,
+          notifier: progressNotifier,
           videoTitle: _detectedTitle ?? 'ڤیدیۆی یووتیوب',
           canWatchPartial: _activeSegments.any((s) => s.translatedText != null),
-          onWatchNow: () => _navigateToWatch(videoId),
+          onWatchNow: () {
+            isProgressScreenActive = false;
+            _navigateToWatch(videoId);
+          },
           onCancel: () {
             _cancelRequested = true;
-            Navigator.pop(context);
+            isProgressScreenActive = false;
+            if (Navigator.canPop(context)) Navigator.pop(context);
             setState(() => _isTranslating = false);
+          },
+          onRetry: () {
+            if (Navigator.canPop(context)) Navigator.pop(context);
+            _executeTranslation(videoId, forceNew: true);
           },
         ),
       ),
-    );
+    ).then((_) {
+      isProgressScreenActive = false;
+    });
 
     try {
-      // Step 2: Extract captions if not already loaded
-      setState(() => _translationState = _translationState.copyWith(
-            status: TranslationStatus.extractingCaptions,
-          ));
+      if (_cancelRequested) return;
+
+      // ── Step 2: Extract caption track (15% -> 40%) ──────────────────────────
+      progressNotifier.value = progressNotifier.value.copyWith(
+        status: TranslationStatus.extractingCaptions,
+        currentProgress: 0.25,
+      );
 
       final transcriptResult = await _youtubeService.extractTranscript(videoId);
       final title = transcriptResult.title;
       final segments = transcriptResult.segments;
 
-      if (_cancelRequested) return;
+      if (_cancelRequested || !mounted) return;
 
       setState(() {
         _detectedTitle = title;
         _activeSegments = segments;
       });
 
-      // Step 3: Contextual Batched Translation via Gemini 2.5 Flash
-      final totalBatches = (segments.length / 25).ceil();
-      setState(() => _translationState = _translationState.copyWith(
-            status: TranslationStatus.translating,
-            totalBatches: totalBatches,
-            completedBatches: 0,
-            estimatedSecondsRemaining: totalBatches * 3,
-          ));
+      // Captions successfully extracted -> Step 2 Done: 40%
+      progressNotifier.value = progressNotifier.value.copyWith(
+        status: TranslationStatus.extractingCaptions,
+        currentProgress: 0.40,
+      );
+
+      // ── Step 3: Fast First-Batch Translation (40% -> 85%) ───────────────────
+      // Translate only the first 15 segments while on the loading screen
+      final firstBatchSize = math.min(15, segments.length);
+      final totalBatches = (segments.length / 15).ceil();
+
+      progressNotifier.value = progressNotifier.value.copyWith(
+        status: TranslationStatus.translating,
+        currentProgress: 0.60,
+        totalBatches: totalBatches,
+        completedBatches: 0,
+        estimatedSecondsRemaining: 3,
+      );
 
       final translationService = TranslationService(
         apiKey: _settings.geminiApiKey,
@@ -286,69 +317,74 @@ class _HomeScreenState extends State<HomeScreen> {
         script: _activeScript,
       );
 
+      await translationService.translateFirstBatch(
+        segments,
+        batchSize: firstBatchSize,
+        videoTitle: title,
+      );
+
+      if (_cancelRequested || !mounted) return;
+
+      // First batch translated -> Step 3 Done: 85%
+      progressNotifier.value = progressNotifier.value.copyWith(
+        status: TranslationStatus.translating,
+        currentProgress: 0.85,
+        completedBatches: 1,
+      );
+
+      // ── Step 4: Timestamp Sync & Transition to Player (85% -> 100%) ─────────
+      progressNotifier.value = progressNotifier.value.copyWith(
+        status: TranslationStatus.syncingTimestamps,
+        currentProgress: 1.0,
+      );
+
       final historyItem = HistoryItem(
         videoId: videoId,
         videoUrl: 'https://youtu.be/$videoId',
         title: title,
         thumbnailUrl: 'https://img.youtube.com/vi/$videoId/hqdefault.jpg',
-        durationSeconds: segments.isNotEmpty ? segments.last.end.inSeconds : 0,
+        durationSeconds:
+            segments.isNotEmpty ? segments.last.end.inSeconds : 0,
         translatedAt: DateTime.now(),
         dialect: _activeDialect,
         script: _activeScript,
         segments: segments,
       );
 
-      await translationService.translateSegments(
-        segments,
-        videoTitle: title,
-        onBatchComplete: (completed, total, remainingSec) {
-          if (_cancelRequested || !mounted) return;
-          setState(() {
-            _translationState = _translationState.copyWith(
-              status: TranslationStatus.translating,
-              completedBatches: completed,
-              totalBatches: total,
-              estimatedSecondsRemaining: remainingSec,
-            );
-          });
-          // Save progress incrementally to history so no tokens are lost
-          _historyService.saveOrUpdate(historyItem);
-        },
-      );
+      await _historyService.saveOrUpdate(historyItem);
 
       if (_cancelRequested || !mounted) return;
 
-      // Step 4: Finalize and save to history
-      setState(() => _translationState = _translationState.copyWith(
-            status: TranslationStatus.completed,
-          ));
+      // Smooth completion tick before opening player
+      await Future.delayed(const Duration(milliseconds: 350));
 
-      await _historyService.saveOrUpdate(historyItem);
-
-      if (mounted) {
-        // Pop the progress screen and push watch screen
-        Navigator.pop(context);
+      if (mounted && isProgressScreenActive) {
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => WatchScreen(
               item: historyItem,
               subtitleFontSize: _activeFontSize,
-              onRetranslate: () => _executeTranslation(videoId, forceNew: true),
+              apiKey: _settings.geminiApiKey,
+              onRetranslate: () =>
+                  _executeTranslation(videoId, forceNew: true),
             ),
           ),
         );
       }
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isTranslating = false;
-        _translationState = _translationState.copyWith(
-          status: TranslationStatus.error,
-          errorMessage: e.toString().replaceFirst('Exception: ', ''),
-        );
-      });
-      _showKurdishSnack('هەڵە: ${e.toString().replaceFirst('Exception: ', '')}');
+      if (!mounted || _cancelRequested) return;
+      final rawError =
+          e.toString().replaceFirst('Exception: ', '').trim();
+      progressNotifier.value = progressNotifier.value.copyWith(
+        status: TranslationStatus.error,
+        errorMessage: rawError.isNotEmpty
+            ? rawError
+            : 'هەڵەیەک ڕوویدا لە کاتی دەرهێنان یان وەرگێڕاندا.',
+      );
     } finally {
       if (mounted) {
         setState(() => _isTranslating = false);
@@ -357,13 +393,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _navigateToWatch(String videoId) {
-    Navigator.pop(context);
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
     final historyItem = HistoryItem(
       videoId: videoId,
       videoUrl: 'https://youtu.be/$videoId',
       title: _detectedTitle ?? 'ڤیدیۆی یووتیوب',
       thumbnailUrl: 'https://img.youtube.com/vi/$videoId/hqdefault.jpg',
-      durationSeconds: _activeSegments.isNotEmpty ? _activeSegments.last.end.inSeconds : 0,
+      durationSeconds:
+          _activeSegments.isNotEmpty ? _activeSegments.last.end.inSeconds : 0,
       translatedAt: DateTime.now(),
       dialect: _activeDialect,
       script: _activeScript,
@@ -376,6 +415,8 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => WatchScreen(
           item: historyItem,
           subtitleFontSize: _activeFontSize,
+          apiKey: _settings.geminiApiKey,
+          onRetranslate: () => _executeTranslation(videoId, forceNew: true),
         ),
       ),
     );

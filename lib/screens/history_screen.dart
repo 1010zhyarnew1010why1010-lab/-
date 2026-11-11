@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import '../models/history_item.dart';
 import '../services/history_service.dart';
+import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import 'watch_screen.dart';
 
@@ -16,11 +17,13 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   final HistoryService _historyService = HistoryService();
+  final SettingsService _settingsService = SettingsService();
   final TextEditingController _searchController = TextEditingController();
 
   List<HistoryItem> _allItems = [];
   List<HistoryItem> _filteredItems = [];
   bool _isLoading = true;
+  String _apiKey = '';
 
   @override
   void initState() {
@@ -32,10 +35,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Future<void> _loadHistory() async {
     setState(() => _isLoading = true);
     final items = await _historyService.getHistory();
+    final settings = await _settingsService.load();
     if (mounted) {
       setState(() {
         _allItems = items;
         _filteredItems = items;
+        _apiKey = settings.geminiApiKey;
         _isLoading = false;
       });
     }
@@ -230,6 +235,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               MaterialPageRoute(
                 builder: (_) => WatchScreen(
                   item: item,
+                  apiKey: _apiKey,
                   onRetranslate: () {
                     Navigator.pop(context);
                     if (widget.onRetranslateUrl != null) {

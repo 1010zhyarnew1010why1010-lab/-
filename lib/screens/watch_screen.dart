@@ -5,18 +5,21 @@ import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import '../models/history_item.dart';
 import '../models/subtitle_segment.dart';
 import '../services/history_service.dart';
+import '../services/translation_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/subtitle_overlay.dart';
 
 class WatchScreen extends StatefulWidget {
   final HistoryItem item;
   final double subtitleFontSize;
+  final String? apiKey;
   final VoidCallback? onRetranslate;
 
   const WatchScreen({
     super.key,
     required this.item,
     this.subtitleFontSize = 16.0,
+    this.apiKey,
     this.onRetranslate,
   });
 
@@ -34,10 +37,65 @@ class _WatchScreenState extends State<WatchScreen> {
   int _lastScrolledIndex = -1;
   bool _isExporting = false;
 
+  bool _isBackgroundTranslating = false;
+  String? _backgroundStatusText;
+  bool _isBackgroundCancelled = false;
+
   @override
   void initState() {
     super.initState();
     _initPlayer();
+    _checkAndStartBackgroundTranslation();
+  }
+
+  void _checkAndStartBackgroundTranslation() {
+    final apiKey = widget.apiKey;
+    if (apiKey == null || apiKey.isEmpty) return;
+    if (widget.item.isFullyTranslated) return;
+
+    final firstUntranslated = widget.item.segments.indexWhere(
+      (s) => s.translatedText == null || s.translatedText!.isEmpty,
+    );
+    if (firstUntranslated == -1) return;
+
+    setState(() {
+      _isBackgroundTranslating = true;
+      _backgroundStatusText = 'وەرگێڕانی بەشەکانی تر لە باکگراوند...';
+    });
+
+    final translationService = TranslationService(
+      apiKey: apiKey,
+      dialect: widget.item.dialect,
+      script: widget.item.script,
+    );
+
+    translationService.translateRemainingBatches(
+      widget.item.segments,
+      startIndex: firstUntranslated,
+      batchSize: 15,
+      videoTitle: widget.item.title,
+      isCancelled: () => _isBackgroundCancelled || !mounted,
+      onBatchComplete: (completed, total) {
+        if (!mounted || _isBackgroundCancelled) return;
+        setState(() {
+          _backgroundStatusText =
+              'وەرگێڕانی باکگراوند: بەشی $completed لە $total';
+          if (completed >= total) {
+            _isBackgroundTranslating = false;
+            _backgroundStatusText = 'هەموو ژێرنووسەکان ئامادەن ✅';
+          }
+        });
+        _historyService.saveOrUpdate(widget.item);
+      },
+    ).then((_) {
+      if (mounted && !_isBackgroundCancelled) {
+        setState(() {
+          _isBackgroundTranslating = false;
+          _backgroundStatusText = 'هەموو ژێرنووسەکان ئامادەن ✅';
+        });
+        _historyService.saveOrUpdate(widget.item);
+      }
+    });
   }
 
   void _initPlayer() {
@@ -123,6 +181,7 @@ class _WatchScreenState extends State<WatchScreen> {
 
   @override
   void dispose() {
+    _isBackgroundCancelled = true;
     _positionTimer?.cancel();
     _controller?.dispose();
     _scrollController.dispose();
@@ -216,6 +275,51 @@ class _WatchScreenState extends State<WatchScreen> {
                 ],
               ),
             ),
+
+            // ── Background Translation Progress Pill ─────────────────────
+            if (_isBackgroundTranslating || _backgroundStatusText != null)
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                decoration: const BoxDecoration(
+                  color: AppTheme.cardSurface,
+                  border: Border(
+                    bottom: BorderSide(color: Colors.white10, width: 1),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    if (_isBackgroundTranslating) ...[
+                      const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                              AppTheme.goldPrimary),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ] else ...[
+                      const Icon(Icons.check_circle_rounded,
+                          size: 14, color: AppTheme.successGreen),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: Text(
+                        _backgroundStatusText ??
+                            'وەرگێڕانی بەشەکانی تر لە باکگراوند...',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.goldPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             // ── Dual-Language Interactive Transcript List ────────────────
             Expanded(
