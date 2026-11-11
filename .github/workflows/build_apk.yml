@@ -222,21 +222,23 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: KurdTube AI ${{ github.ref_name }}
+          name: ژێرنووس - Zhirnoos ${{ github.ref_name }}
           draft: false
           prerelease: false
           files: release-apk/app-release.apk
           body: |
-            ## KurdTube AI ${{ github.ref_name }}
+            ## ژێرنووس - Zhirnoos ${{ github.ref_name }}
 
-            ### Installation
-            1. Download `app-release.apk` below.
-            2. Enable *Install from unknown sources* on your Android device.
-            3. Install the APK and open the app.
-            4. Tap ⚙️ Settings → paste your Gemini API key (free at [ai.google.dev](https://ai.google.dev)).
+            ### تایبەتمەندییە نوێیەکان لە وەشانی v2.0.0:
+            1. **وەرگێڕانی واتایی و ڕستەی تەواو**: بەکارهێنانی مۆدێلی نوێی Gemini 2.5 Flash بە ڕێگەی دەستەواژەی تەواو (Contextual Translation) نەک وشە بە وشە.
+            2. **دیزاینی نوێی شاهانەی شین و ئاڵتوونی**: چوار شاشەی دەوڵەمەند (سەرەکی، هەڵبژاردنی زمان، وەرگێڕان، سەیرکردن و هەڵگرتن).
+            3. **سیستەمی مێژوو و پاشەکەوتکردن**: هەڵگرتنی هەموو ڤیدیۆ وەرگێڕدراوەکان بۆ سەیرکردنەوە بەبێ پێویستی بە ئینتەرنێت یان بەکارهێنانەوەی API.
+            4. **هەناردەی فایلی ژێرنووس**: دەرهێنان و هاوبەشکردنی فایلی SRT و VTT.
+            5. **چارەسەری هەڵەی هێڵی ئینتەرنێت**: پاراستنی داواکارییەکان لە دابڕانی هێڵ (Auto-Retry) و خوێندنەوەی دروستی JSON.
 
-            ### How to use
-            - Paste any YouTube URL in the input bar, or
-            - Share a video from the YouTube app → KurdTube AI appears in the Share Sheet.
+            ### شێوازی دابەزاندن و دامەزراندن:
+            1. فایلی `app-release.apk` لە خوارەوە دابەزێنە.
+            2. لە مۆبایلەکەت ڕێگە بە *Install from unknown sources* بدە ئەگەر داوای کرد.
+            3. بەرنامەکە بکەرەوە و لە بەشی ڕێکخستنەکان کلیلی بێبەرامبەری Gemini API دابنێ (لە [ai.google.dev](https://ai.google.dev)).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

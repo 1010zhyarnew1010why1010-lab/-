@@ -5,6 +5,9 @@ import '../models/app_settings.dart';
 class SettingsService {
   static const _keyApiKey = 'gemini_api_key';
   static const _keyFontSize = 'subtitle_font_size';
+  static const _keyDialect = 'default_dialect';
+  static const _keyScript = 'default_script';
+  static const _keyPlaybackSpeed = 'playback_speed';
   static const _prefixTranslationCache = 'translation_cache_';
 
   Future<AppSettings> load() async {
@@ -12,6 +15,9 @@ class SettingsService {
     return AppSettings(
       geminiApiKey: prefs.getString(_keyApiKey) ?? '',
       subtitleFontSize: prefs.getDouble(_keyFontSize) ?? 16.0,
+      defaultDialect: prefs.getString(_keyDialect) ?? 'sorani',
+      defaultScript: prefs.getString(_keyScript) ?? 'arabic',
+      playbackSpeed: prefs.getDouble(_keyPlaybackSpeed) ?? 1.0,
     );
   }
 
@@ -19,6 +25,9 @@ class SettingsService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyApiKey, settings.geminiApiKey);
     await prefs.setDouble(_keyFontSize, settings.subtitleFontSize);
+    await prefs.setString(_keyDialect, settings.defaultDialect);
+    await prefs.setString(_keyScript, settings.defaultScript);
+    await prefs.setDouble(_keyPlaybackSpeed, settings.playbackSpeed);
   }
 
   /// Save a translated transcript to cache keyed by video ID.
@@ -26,7 +35,6 @@ class SettingsService {
       String videoId, List<Map<String, dynamic>> segments) async {
     final prefs = await SharedPreferences.getInstance();
     final key = '$_prefixTranslationCache$videoId';
-    // Encode as a flat list of "index|text" strings to avoid json_encode dep.
     final List<String> encoded = segments
         .map((s) => '${s['index']}|${s['text']}')
         .toList();

@@ -1,7 +1,7 @@
 name: kurdtube_ai
-description: KurdTube AI - YouTube transcript translator to Central Kurdish (Sorani) using Gemini AI.
+description: Zhirnoos (ژێرنووس) - YouTube transcript translator to Kurdish (Sorani & Kurmanji) using Gemini AI.
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -12,9 +12,8 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # YouTube player & data extraction
-  # 9.0.4 is the last version compatible with a wide Dart SDK range
+  # 9.0.4 is compatible with wide Dart SDK range
   youtube_player_flutter: ^9.0.4
-  youtube_explode_dart: ^2.3.6
 
   # Share intent from native apps
   receive_sharing_intent: ^1.8.0
@@ -23,8 +22,10 @@ dependencies:
   http: ^1.2.2
   google_generative_ai: ^0.4.3
 
-  # Local storage
+  # Local storage & files
   shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  share_plus: ^10.1.2
 
   # UI helpers
   flutter_animate: ^4.5.0
