@@ -80,6 +80,7 @@ class GoldButton extends StatelessWidget {
                       ],
                     ],
                   ),
+          ),
         ),
       ),
     );

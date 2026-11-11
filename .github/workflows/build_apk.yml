@@ -76,7 +76,7 @@ jobs:
           echo "── Restoring custom AndroidManifest, pubspec, lib/, assets/ ──"
           cp /tmp/AndroidManifest_custom.xml android/app/src/main/AndroidManifest.xml
           cp /tmp/pubspec_custom.yaml pubspec.yaml
-          rm -rf lib/ assets/
+          rm -rf lib/ assets/ test/
           tar -xzf /tmp/lib_custom.tar.gz
           tar -xzf /tmp/assets_custom.tar.gz
 

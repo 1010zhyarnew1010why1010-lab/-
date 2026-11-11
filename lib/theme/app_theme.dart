@@ -85,7 +85,6 @@ class AppTheme {
         primary: goldPrimary,
         secondary: goldAccent,
         surface: cardSurface,
-        background: bgDarkNavy,
         onPrimary: textDark,
         onSurface: textWhite,
         error: errorRed,
@@ -110,7 +109,7 @@ class AppTheme {
           side: const BorderSide(color: goldBorder, width: 1.2),
         ),
       ),
-      dialogTheme: DialogTheme(
+      dialogTheme: DialogThemeData(
         backgroundColor: cardSurface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
