@@ -481,4 +481,6 @@ class YoutubeService {
     }
     return null;
   }
+
+  void dispose() {}
 }

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import '../models/history_item.dart';
-import '../models/subtitle_segment.dart';
 import '../services/history_service.dart';
 import '../services/translation_service.dart';
 import '../theme/app_theme.dart';
