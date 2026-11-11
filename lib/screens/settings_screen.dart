@@ -174,7 +174,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         color: AppTheme.textWhite,
                         fontSize: 13),
                     decoration: InputDecoration(
-                      hintText: 'AIzaSy...',
+                      hintText: 'AQ... یان AIzaSy...',
                       hintStyle:
                           const TextStyle(color: Colors.white24, fontSize: 13),
                       filled: true,

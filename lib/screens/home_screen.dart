@@ -265,6 +265,15 @@ class _HomeScreenState extends State<HomeScreen> {
             if (Navigator.canPop(context)) Navigator.pop(context);
             _executeTranslation(videoId, forceNew: true);
           },
+          onUpdateApiKey: (newKey) async {
+            final cleanKey = await _settingsService.saveApiKey(newKey);
+            if (!mounted) return;
+            setState(() {
+              _settings = _settings.copyWith(geminiApiKey: cleanKey);
+            });
+            if (Navigator.canPop(context)) Navigator.pop(context);
+            _executeTranslation(videoId, forceNew: true);
+          },
         ),
       ),
     ).then((_) {

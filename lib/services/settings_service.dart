@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/app_settings.dart';
 
 class SettingsService {
-  static const _keyApiKey = 'gemini_api_key';
+  static const keyApiKey = 'gemini_api_key';
   static const _keyFontSize = 'subtitle_font_size';
   static const _keyDialect = 'default_dialect';
   static const _keyScript = 'default_script';
@@ -12,8 +12,11 @@ class SettingsService {
 
   Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
+    final storedKey = prefs.getString(keyApiKey);
+    final sanitizedKey = AppSettings.sanitizeApiKey(storedKey);
+
     return AppSettings(
-      geminiApiKey: prefs.getString(_keyApiKey) ?? '',
+      geminiApiKey: sanitizedKey,
       subtitleFontSize: prefs.getDouble(_keyFontSize) ?? 16.0,
       defaultDialect: prefs.getString(_keyDialect) ?? 'sorani',
       defaultScript: prefs.getString(_keyScript) ?? 'arabic',
@@ -23,11 +26,20 @@ class SettingsService {
 
   Future<void> save(AppSettings settings) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyApiKey, settings.geminiApiKey);
+    final cleanKey = AppSettings.sanitizeApiKey(settings.geminiApiKey);
+    await prefs.setString(keyApiKey, cleanKey);
     await prefs.setDouble(_keyFontSize, settings.subtitleFontSize);
     await prefs.setString(_keyDialect, settings.defaultDialect);
     await prefs.setString(_keyScript, settings.defaultScript);
     await prefs.setDouble(_keyPlaybackSpeed, settings.playbackSpeed);
+  }
+
+  /// Directly save or update just the API key (used by error card quick dialog)
+  Future<String> saveApiKey(String rawKey) async {
+    final cleanKey = AppSettings.sanitizeApiKey(rawKey);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(keyApiKey, cleanKey);
+    return cleanKey;
   }
 
   /// Save a translated transcript to cache keyed by video ID.

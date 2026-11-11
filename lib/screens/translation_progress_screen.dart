@@ -1,6 +1,7 @@
 // lib/screens/translation_progress_screen.dart
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/translation_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/gold_button.dart';
@@ -12,6 +13,7 @@ class TranslationProgressScreen extends StatefulWidget {
   final VoidCallback onWatchNow;
   final VoidCallback onCancel;
   final VoidCallback? onRetry;
+  final void Function(String newKey)? onUpdateApiKey;
 
   const TranslationProgressScreen({
     super.key,
@@ -21,6 +23,7 @@ class TranslationProgressScreen extends StatefulWidget {
     required this.onWatchNow,
     required this.onCancel,
     this.onRetry,
+    this.onUpdateApiKey,
   });
 
   @override
@@ -253,6 +256,14 @@ class _TranslationProgressScreenState extends State<TranslationProgressScreen>
   }
 
   Widget _buildErrorCard(TranslationState state) {
+    final errText = (state.errorMessage ?? '').toLowerCase();
+    final isApiKeyError = errText.contains('api key') ||
+        errText.contains('api_key') ||
+        errText.contains('apikey') ||
+        errText.contains('403') ||
+        errText.contains('invalid') ||
+        errText.contains('کلیل');
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -285,7 +296,33 @@ class _TranslationProgressScreenState extends State<TranslationProgressScreen>
               height: 1.5,
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+
+          // ── Quick API Key Button if API key error or callback provided ───
+          if (isApiKeyError || widget.onUpdateApiKey != null) ...[
+            OutlinedButton.icon(
+              icon: const Icon(Icons.key_rounded,
+                  color: AppTheme.goldPrimary, size: 20),
+              label: const Text(
+                'گۆڕینی کلیلی API',
+                style: TextStyle(
+                  fontFamily: 'NotoNaskhArabic',
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.goldPrimary,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+                side: const BorderSide(color: AppTheme.goldPrimary, width: 1.5),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(25),
+                ),
+              ),
+              onPressed: () => _showQuickApiKeyDialog(context),
+            ),
+            const SizedBox(height: 12),
+          ],
+
           if (widget.onRetry != null) ...[
             GoldButton(
               label: 'دووبارە تاقیبکەرەوە',
@@ -313,6 +350,138 @@ class _TranslationProgressScreenState extends State<TranslationProgressScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showQuickApiKeyDialog(BuildContext context) {
+    final controller = TextEditingController();
+    bool obscure = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            backgroundColor: AppTheme.bgSecondaryNavy,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: const BorderSide(color: AppTheme.goldBorder),
+            ),
+            title: const Row(
+              children: [
+                Icon(Icons.key_rounded, color: AppTheme.goldPrimary, size: 22),
+                SizedBox(width: 8),
+                Text(
+                  'گۆڕینی کلیلی Gemini API',
+                  style: TextStyle(
+                    color: AppTheme.textWhite,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'کلیلی نوێی Google Gemini لێرە دابنێ. دەتوانی کلیلی بێبەرامبەر لە ai.google.dev وەربگریت.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textMuted,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  obscureText: obscure,
+                  autofocus: true,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    color: AppTheme.textWhite,
+                    fontSize: 13,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'AQ... یان AIzaSy...',
+                    hintStyle:
+                        const TextStyle(color: Colors.white24, fontSize: 13),
+                    filled: true,
+                    fillColor: AppTheme.bgDarkNavy,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppTheme.goldBorder),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(
+                          color: AppTheme.goldPrimary, width: 2),
+                    ),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.paste_rounded,
+                              size: 18, color: AppTheme.goldPrimary),
+                          tooltip: 'پەیستکردن لە کلیپبۆرد',
+                          onPressed: () async {
+                            final data =
+                                await Clipboard.getData(Clipboard.kTextPlain);
+                            if (data?.text != null) {
+                              controller.text = data!.text!;
+                            }
+                          },
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            obscure
+                                ? Icons.visibility_off_rounded
+                                : Icons.visibility_rounded,
+                            size: 18,
+                            color: AppTheme.textMuted,
+                          ),
+                          onPressed: () =>
+                              setDialogState(() => obscure = !obscure),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('پاشگەزبوونەوە',
+                    style: TextStyle(color: AppTheme.textMuted)),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.goldPrimary,
+                  foregroundColor: AppTheme.textDark,
+                ),
+                onPressed: () {
+                  final text = controller.text.trim();
+                  if (text.isNotEmpty) {
+                    Navigator.pop(ctx);
+                    if (widget.onUpdateApiKey != null) {
+                      widget.onUpdateApiKey!(text);
+                    }
+                  }
+                },
+                child: const Text(
+                  'پاشەکەوتکردن و دووبارەکردنەوە',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

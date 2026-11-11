@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import '../models/app_settings.dart';
 import '../models/subtitle_segment.dart';
 
 /// Contextual and resilient subtitle translation service using Gemini 2.5 Flash.
@@ -12,15 +13,19 @@ class TranslationService {
   static const String _baseUrl =
       'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent';
 
+  static String sanitizeKey(String? rawKey) {
+    return AppSettings.sanitizeApiKey(rawKey);
+  }
+
   final String apiKey;
   final String dialect; // 'sorani' or 'kurmanji'
   final String script; // 'arabic' or 'latin'
 
   TranslationService({
-    required this.apiKey,
+    required String apiKey,
     this.dialect = 'sorani',
     this.script = 'arabic',
-  });
+  }) : apiKey = sanitizeKey(apiKey);
 
   String _buildSystemInstruction() {
     final targetDialect = dialect.toLowerCase() == 'kurmanji'
@@ -227,7 +232,9 @@ CRITICAL SUBTITLE TRANSLATION RULES:
       } catch (e) {
         lastException = Exception(e.toString());
         // For fatal API errors like 400 or 403, do not retry blindly
-        if (e.toString().contains('403') || e.toString().contains('API_KEY_INVALID')) {
+        if (e.toString().contains('403') ||
+            e.toString().contains('API_KEY_INVALID') ||
+            e.toString().contains('API key not valid')) {
           rethrow;
         }
       } finally {
@@ -294,14 +301,15 @@ CRITICAL SUBTITLE TRANSLATION RULES:
       },
     };
 
-    final uri = Uri.parse(_baseUrl);
+    final cleanKey = sanitizeKey(apiKey);
+    final uri = Uri.parse('$_baseUrl?key=$cleanKey');
 
     final response = await client
         .post(
           uri,
           headers: {
             'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey, // API Key in header - no URL leaks
+            'x-goog-api-key': cleanKey,
           },
           body: jsonEncode(requestBody),
         )
