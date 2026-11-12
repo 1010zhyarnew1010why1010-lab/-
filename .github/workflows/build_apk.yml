@@ -186,7 +186,7 @@ jobs:
 
       # ── 10. Build release APK ─────────────────────────────────────────────────
       - name: Build release APK
-        run: flutter build apk --release --no-shrink
+        run: flutter build apk --release
 
       # ── 11. Upload APKs ───────────────────────────────────────────────────────
       - name: Upload Debug APK
