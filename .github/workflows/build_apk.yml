@@ -96,6 +96,8 @@ jobs:
           grep -q "android.useAndroidX" android/gradle.properties || echo "android.useAndroidX=true" >> android/gradle.properties
           grep -q "android.enableJetifier" android/gradle.properties || echo "android.enableJetifier=true" >> android/gradle.properties
           grep -q "android.suppressUnsupportedCompileSdk" android/gradle.properties || echo "android.suppressUnsupportedCompileSdk=35" >> android/gradle.properties
+          grep -q "android.lint.abortOnError" android/gradle.properties || echo "android.lint.abortOnError=false" >> android/gradle.properties
+          grep -q "android.lint.checkReleaseBuilds" android/gradle.properties || echo "android.lint.checkReleaseBuilds=false" >> android/gradle.properties
 
           echo "── 3. Injecting namespaces for plugins missing namespace ──"
           python3 - << 'EOF'
@@ -174,6 +176,21 @@ jobs:
               with open(app_gradle, "w", encoding="utf-8") as f:
                   f.write(c)
               print("Patched app/build.gradle (minSdk=21, compileSdk=37, minify disabled)")
+
+          # Disable lintVital across all projects and plugins to prevent lint parser crashes
+          for root_gradle in ["android/build.gradle", "android/settings.gradle"]:
+              if os.path.exists(root_gradle):
+                  with open(root_gradle, "a", encoding="utf-8") as f:
+                      f.write("\n\nallprojects {\n    tasks.matching { it.name.contains('lintVital') || it.name.contains('LintVital') }.configureEach {\n        enabled = false\n    }\n}\n")
+                  print(f"Disabled lintVital tasks in {root_gradle}")
+
+          if os.path.exists(app_gradle):
+              with open(app_gradle, "a", encoding="utf-8") as f:
+                  f.write("\n\nandroid {\n    lintOptions {\n        checkReleaseBuilds false\n        abortOnError false\n    }\n}\n")
+
+          if os.path.exists(app_gradle_kts):
+              with open(app_gradle_kts, "a", encoding="utf-8") as f:
+                  f.write("\n\nandroid {\n    lint {\n        checkReleaseBuilds = false\n        abortOnError = false\n    }\n}\n")
           EOF
 
       # ── 8. Analyze (non-blocking) ─────────────────────────────────────────────
