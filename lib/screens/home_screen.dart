@@ -217,6 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
               item: existingHistory,
               subtitleFontSize: _activeFontSize,
               apiKey: _settings.geminiApiKey,
+              apiKeys: _settings.geminiApiKeys,
               onRetranslate: () => _executeTranslation(videoId, forceNew: true),
             ),
           ),
@@ -321,6 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final translationService = TranslationService(
         apiKey: _settings.geminiApiKey,
+        apiKeys: _settings.geminiApiKeys,
         dialect: _activeDialect,
         script: _activeScript,
       );
@@ -377,6 +379,7 @@ class _HomeScreenState extends State<HomeScreen> {
               item: historyItem,
               subtitleFontSize: _activeFontSize,
               apiKey: _settings.geminiApiKey,
+              apiKeys: _settings.geminiApiKeys,
               onRetranslate: () =>
                   _executeTranslation(videoId, forceNew: true),
             ),
@@ -424,6 +427,7 @@ class _HomeScreenState extends State<HomeScreen> {
           item: historyItem,
           subtitleFontSize: _activeFontSize,
           apiKey: _settings.geminiApiKey,
+          apiKeys: _settings.geminiApiKeys,
           onRetranslate: () => _executeTranslation(videoId, forceNew: true),
         ),
       ),

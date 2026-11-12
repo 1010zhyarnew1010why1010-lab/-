@@ -1,31 +1,46 @@
 // lib/services/translation_service.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../models/app_settings.dart';
 import '../models/subtitle_segment.dart';
 
-/// Contextual and resilient subtitle translation service using Gemini 2.5 Flash.
+/// Contextual and resilient subtitle translation service using Gemini API
+/// with multi-key rotation and multi-model fallback chain.
 class TranslationService {
-  static const int _batchSize = 25; // 25 segments per batch for deep contextual awareness
-  static const String _model = 'gemini-2.5-flash';
-  static const String _baseUrl =
-      'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent';
+  static const int defaultBatchSize = 100; // Large batch size cuts API calls by 80%!
+  static const List<String> _models = [
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+  ];
+
+  final List<String> apiKeys;
+  final String dialect; // 'sorani' or 'kurmanji'
+  final String script; // 'arabic' or 'latin'
+
+  int _currentKeyIndex = 0;
+  int _currentModelIndex = 0;
+
+  TranslationService({
+    List<String>? apiKeys,
+    String? apiKey,
+    this.dialect = 'sorani',
+    this.script = 'arabic',
+  }) : apiKeys = (apiKeys != null && apiKeys.isNotEmpty)
+            ? AppSettings.sanitizeApiKeys(apiKeys)
+            : AppSettings.sanitizeApiKeys(apiKey);
+
+  String get activeApiKey => apiKeys.isNotEmpty
+      ? apiKeys[_currentKeyIndex % apiKeys.length]
+      : AppSettings.defaultGeminiApiKey;
+
+  String get activeModel => _models[_currentModelIndex % _models.length];
 
   static String sanitizeKey(String? rawKey) {
     return AppSettings.sanitizeApiKey(rawKey);
   }
-
-  final String apiKey;
-  final String dialect; // 'sorani' or 'kurmanji'
-  final String script; // 'arabic' or 'latin'
-
-  TranslationService({
-    required String apiKey,
-    this.dialect = 'sorani',
-    this.script = 'arabic',
-  }) : apiKey = sanitizeKey(apiKey);
 
   String _buildSystemInstruction() {
     final targetDialect = dialect.toLowerCase() == 'kurmanji'
@@ -44,13 +59,13 @@ CRITICAL SUBTITLE TRANSLATION RULES:
 1. YouTube subtitles break spoken sentences into arbitrary, short fragments. NEVER translate word-by-word or in isolation.
 2. Read the whole batch and previous context to understand complete sentences and speaker intent before translating.
 3. Distribute the natural Kurdish sentence across the provided segment indices so subtitle timings align with the speaker's voice.
-4. Maintain exact 1-to-1 index mapping. Return an array of JSON objects with {"index": number, "text": "string"}.
+4. Maintain exact 1-to-1 local index mapping (0 to N-1). Return an array of JSON objects with {"index": number, "text": "string"}.
 5. Do NOT skip, combine, or invent indices. Keep technical and domain-specific terms accurate.
 6. Return ONLY the JSON array. Do not output markdown code blocks, preambles, or commentary.
 ''';
   }
 
-  /// Translates only the first batch (e.g. 15 segments) for ultra-fast instant playback.
+  /// Translates only the first batch (15 segments) for ultra-fast instant playback.
   Future<void> translateFirstBatch(
     List<SubtitleSegment> segments, {
     int batchSize = 15,
@@ -58,29 +73,19 @@ CRITICAL SUBTITLE TRANSLATION RULES:
   }) async {
     if (segments.isEmpty) return;
     final firstBatch = segments.take(batchSize).toList();
-    final translatedItems = await _translateBatchWithRetry(
+    await _translateAndApplyBatch(
       firstBatch,
       videoTitle: videoTitle,
       previousContext: '',
     );
-
-    for (final item in translatedItems) {
-      final index = item['index'] as int?;
-      final text = item['text'] as String?;
-      if (index != null && text != null && text.trim().isNotEmpty) {
-        final matchIdx = segments.indexWhere((s) => s.index == index);
-        if (matchIdx != -1) {
-          segments[matchIdx].translatedText = text.trim();
-        }
-      }
-    }
   }
 
   /// Translates the remaining batches sequentially in the background while user watches.
+  /// Uses default batchSize = 100 to drastically reduce API requests.
   Future<void> translateRemainingBatches(
     List<SubtitleSegment> segments, {
     int startIndex = 15,
-    int batchSize = 15,
+    int batchSize = defaultBatchSize,
     String videoTitle = '',
     required void Function(int completedBatches, int totalBatches)
         onBatchComplete,
@@ -95,10 +100,17 @@ CRITICAL SUBTITLE TRANSLATION RULES:
     for (int i = 0; i < batches.length; i++) {
       if (isCancelled != null && isCancelled()) break;
 
+      // 2-second delay between batch requests to stay within RPM rate limits
+      if (i > 0) {
+        await Future.delayed(const Duration(milliseconds: 2000));
+      }
+
+      if (isCancelled != null && isCancelled()) break;
+
       final batch = batches[i];
       final currentOverallBatchIndex = i + 2;
 
-      // Provide context from the previous 2 translated segments
+      // Sliding context from up to 2 translated previous segments
       String previousContext = '';
       final firstIdxInThisBatch = batch.first.index;
       final prevSegments = segments
@@ -120,33 +132,22 @@ CRITICAL SUBTITLE TRANSLATION RULES:
       }
 
       try {
-        final translatedItems = await _translateBatchWithRetry(
+        await _translateAndApplyBatch(
           batch,
           videoTitle: videoTitle,
           previousContext: previousContext,
         );
 
         if (isCancelled != null && isCancelled()) break;
-
-        for (final item in translatedItems) {
-          final index = item['index'] as int?;
-          final text = item['text'] as String?;
-          if (index != null && text != null && text.trim().isNotEmpty) {
-            final matchIdx = segments.indexWhere((s) => s.index == index);
-            if (matchIdx != -1) {
-              segments[matchIdx].translatedText = text.trim();
-            }
-          }
-        }
-
         onBatchComplete(currentOverallBatchIndex, totalBatches);
-      } catch (_) {
-        await Future.delayed(const Duration(seconds: 2));
+      } catch (e) {
+        // Wait and continue with next batch rather than crashing
+        await Future.delayed(const Duration(seconds: 3));
       }
     }
   }
 
-  /// Translates segments in batches of 25 with sliding previous context.
+  /// Translates segments in batches of 100 with sliding previous context.
   Future<void> translateSegments(
     List<SubtitleSegment> segments, {
     String videoTitle = '',
@@ -155,14 +156,17 @@ CRITICAL SUBTITLE TRANSLATION RULES:
   }) async {
     if (segments.isEmpty) return;
 
-    final batches = _splitIntoBatches(segments, _batchSize);
+    final batches = _splitIntoBatches(segments, defaultBatchSize);
     final totalBatches = batches.length;
     final stopwatch = Stopwatch()..start();
 
     for (int i = 0; i < totalBatches; i++) {
+      if (i > 0) {
+        await Future.delayed(const Duration(milliseconds: 2000));
+      }
+
       final batch = batches[i];
 
-      // Provide the last 2 translated segments of the previous batch for cohesive context
       String previousContext = '';
       if (i > 0 && batches[i - 1].isNotEmpty) {
         final prev = batches[i - 1];
@@ -171,94 +175,179 @@ CRITICAL SUBTITLE TRANSLATION RULES:
             .map((s) =>
                 'Segment ${s.index} (EN: "${s.originalText}" -> KU: "${s.translatedText ?? ''}")')
             .join(' | ');
-        previousContext = 'PREVIOUS_SUBTITLE_CONTEXT (Do not re-translate): $lines';
+        previousContext =
+            'PREVIOUS_SUBTITLE_CONTEXT (Do not re-translate): $lines';
       }
 
       final batchStartTime = stopwatch.elapsedMilliseconds;
-      final translatedItems = await _translateBatchWithRetry(
+      await _translateAndApplyBatch(
         batch,
         videoTitle: videoTitle,
         previousContext: previousContext,
       );
 
-      // Apply translations back to segments
-      for (final item in translatedItems) {
-        final index = item['index'] as int?;
-        final text = item['text'] as String?;
-        if (index != null && text != null && text.trim().isNotEmpty) {
-          final matchIdx = segments.indexWhere((s) => s.index == index);
-          if (matchIdx != -1) {
-            segments[matchIdx].translatedText = text.trim();
-          }
-        }
-      }
-
-      // Calculate estimated time remaining
-      final elapsedForThisBatch = stopwatch.elapsedMilliseconds - batchStartTime;
+      final elapsedForThisBatch =
+          stopwatch.elapsedMilliseconds - batchStartTime;
       final remainingBatches = totalBatches - (i + 1);
-      final estimatedSecRemaining = ((elapsedForThisBatch * remainingBatches) / 1000).ceil();
+      final estimatedSecRemaining =
+          ((elapsedForThisBatch * remainingBatches) / 1000).ceil();
 
       onBatchComplete(i + 1, totalBatches, estimatedSecRemaining);
     }
   }
 
-  /// Executes batch translation with auto-retry and fresh HTTP client on connection aborts.
-  Future<List<Map<String, dynamic>>> _translateBatchWithRetry(
+  /// Translates a batch using local 0-based indexing and applies results to batch.
+  /// Also detects any missing segments and performs a single targeted retry.
+  Future<void> _translateAndApplyBatch(
     List<SubtitleSegment> batch, {
     required String videoTitle,
     required String previousContext,
   }) async {
-    const maxRetries = 3;
-    final delays = [const Duration(milliseconds: 1500), const Duration(milliseconds: 3000), const Duration(milliseconds: 5000)];
+    if (batch.isEmpty) return;
 
-    Exception? lastException;
+    // Build local 0-based list for the AI request
+    final localBatchInput = List.generate(
+      batch.length,
+      (idx) => {'index': idx, 'text': batch[idx].originalText},
+    );
 
-    for (int attempt = 0; attempt < maxRetries; attempt++) {
-      http.Client? client;
-      try {
-        client = http.Client();
-        return await _translateBatch(
-          client,
-          batch,
-          videoTitle: videoTitle,
-          previousContext: previousContext,
-        );
-      } on SocketException catch (e) {
-        lastException = e;
-      } on http.ClientException catch (e) {
-        lastException = e;
-      } on TimeoutException catch (e) {
-        lastException = e;
-      } catch (e) {
-        lastException = Exception(e.toString());
-        // For fatal API errors like 400 or 403, do not retry blindly
-        if (e.toString().contains('403') ||
-            e.toString().contains('API_KEY_INVALID') ||
-            e.toString().contains('API key not valid')) {
-          rethrow;
-        }
-      } finally {
-        client?.close();
-      }
+    final translatedItems = await _translateWithKeyAndModelFallback(
+      localBatchInput,
+      videoTitle: videoTitle,
+      previousContext: previousContext,
+    );
 
-      if (attempt < maxRetries - 1) {
-        await Future.delayed(delays[attempt]);
+    // Apply translations
+    final Set<int> receivedLocalIndices = {};
+    for (final item in translatedItems) {
+      final localIdx = item['index'] as int?;
+      final text = item['text'] as String?;
+      if (localIdx != null &&
+          localIdx >= 0 &&
+          localIdx < batch.length &&
+          text != null &&
+          text.trim().isNotEmpty) {
+        batch[localIdx].translatedText = text.trim();
+        receivedLocalIndices.add(localIdx);
       }
     }
 
-    // Fallback: If network retries failed completely, try salvage or rethrow
-    throw lastException ??
-        Exception('Connection to Gemini API failed after $maxRetries attempts.');
+    // Zero Skipped Lines Check: Find missing indices in this batch
+    final List<SubtitleSegment> missingSegments = [];
+    final List<int> missingLocalIndices = [];
+    for (int i = 0; i < batch.length; i++) {
+      if (!receivedLocalIndices.contains(i) ||
+          batch[i].translatedText == null ||
+          batch[i].translatedText!.isEmpty) {
+        missingSegments.add(batch[i]);
+        missingLocalIndices.add(i);
+      }
+    }
+
+    // If any items were skipped, do a single targeted follow-up call
+    if (missingSegments.isNotEmpty && missingSegments.length <= 25) {
+      try {
+        final retryLocalInput = List.generate(
+          missingSegments.length,
+          (idx) => {'index': idx, 'text': missingSegments[idx].originalText},
+        );
+        final retryItems = await _translateWithKeyAndModelFallback(
+          retryLocalInput,
+          videoTitle: videoTitle,
+          previousContext: previousContext,
+        );
+        for (final item in retryItems) {
+          final relIdx = item['index'] as int?;
+          final text = item['text'] as String?;
+          if (relIdx != null &&
+              relIdx >= 0 &&
+              relIdx < missingLocalIndices.length &&
+              text != null &&
+              text.trim().isNotEmpty) {
+            final targetBatchIdx = missingLocalIndices[relIdx];
+            batch[targetBatchIdx].translatedText = text.trim();
+          }
+        }
+      } catch (_) {
+        // Fallback: segments retain null and display original text
+      }
+    }
   }
 
-  Future<List<Map<String, dynamic>>> _translateBatch(
-    http.Client client,
-    List<SubtitleSegment> batch, {
+  /// Sends request with automatic Model and Key failover on HTTP 429 / Quota limits
+  Future<List<Map<String, dynamic>>> _translateWithKeyAndModelFallback(
+    List<Map<String, dynamic>> items, {
     required String videoTitle,
     required String previousContext,
   }) async {
-    final segmentsJson = batch.map((s) => s.toTranslationJson()).toList();
+    final totalKeys = apiKeys.isNotEmpty ? apiKeys.length : 1;
+    final totalCombinations = totalKeys * _models.length;
 
+    Exception? lastError;
+
+    for (int combo = 0; combo < totalCombinations; combo++) {
+      final key = activeApiKey;
+      final model = activeModel;
+
+      http.Client? client;
+      try {
+        client = http.Client();
+        return await _executePost(
+          client,
+          items,
+          key: key,
+          model: model,
+          videoTitle: videoTitle,
+          previousContext: previousContext,
+        );
+      } catch (e) {
+        lastError = e is Exception ? e : Exception(e.toString());
+        final errStr = e.toString().toLowerCase();
+
+        final isQuotaOrRateLimit = errStr.contains('429') ||
+            errStr.contains('resource_exhausted') ||
+            errStr.contains('quota') ||
+            errStr.contains('limit');
+
+        if (isQuotaOrRateLimit) {
+          // Fallback to next model first
+          _currentModelIndex++;
+          if (_currentModelIndex >= _models.length) {
+            _currentModelIndex = 0;
+            // Rotate to next API key
+            _currentKeyIndex = (_currentKeyIndex + 1) % totalKeys;
+          }
+          await Future.delayed(const Duration(milliseconds: 500));
+          continue;
+        }
+
+        // Fatal auth errors for this key -> advance key immediately
+        if (errStr.contains('403') ||
+            errStr.contains('api_key_invalid') ||
+            errStr.contains('api key not valid')) {
+          _currentKeyIndex = (_currentKeyIndex + 1) % totalKeys;
+          if (combo < totalCombinations - 1) continue;
+        }
+
+        // Network glitch -> retry after small pause
+        await Future.delayed(const Duration(milliseconds: 1500));
+      } finally {
+        client?.close();
+      }
+    }
+
+    throw lastError ??
+        Exception('هەموو کلیلەکانی API و مۆدێلەکان کۆتاییان هات (Quota Exceeded)');
+  }
+
+  Future<List<Map<String, dynamic>>> _executePost(
+    http.Client client,
+    List<Map<String, dynamic>> items, {
+    required String key,
+    required String model,
+    required String videoTitle,
+    required String previousContext,
+  }) async {
     final inputPrompt = StringBuffer();
     if (videoTitle.isNotEmpty) {
       inputPrompt.writeln('VIDEO TITLE: "$videoTitle"');
@@ -267,7 +356,7 @@ CRITICAL SUBTITLE TRANSLATION RULES:
       inputPrompt.writeln(previousContext);
     }
     inputPrompt.writeln('SUBTITLE SEGMENTS TO TRANSLATE (JSON):');
-    inputPrompt.writeln(jsonEncode(segmentsJson));
+    inputPrompt.writeln(jsonEncode(items));
 
     final requestBody = {
       'system_instruction': {
@@ -283,7 +372,7 @@ CRITICAL SUBTITLE TRANSLATION RULES:
         }
       ],
       'generationConfig': {
-        'thinkingConfig': {'thinkingBudget': 0}, // Zero thinking overhead for maximum speed
+        'thinkingConfig': {'thinkingBudget': 0},
         'maxOutputTokens': 8192,
         'temperature': 0.3,
         'responseMimeType': 'application/json',
@@ -301,12 +390,13 @@ CRITICAL SUBTITLE TRANSLATION RULES:
       },
     };
 
-    final cleanKey = sanitizeKey(apiKey);
-    final uri = Uri.parse('$_baseUrl?key=$cleanKey');
+    final cleanKey = sanitizeKey(key);
+    final endpoint =
+        'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$cleanKey';
 
     final response = await client
         .post(
-          uri,
+          Uri.parse(endpoint),
           headers: {
             'Content-Type': 'application/json',
             'x-goog-api-key': cleanKey,
@@ -328,7 +418,8 @@ CRITICAL SUBTITLE TRANSLATION RULES:
     final responseBody = jsonDecode(response.body) as Map<String, dynamic>;
     final candidates = responseBody['candidates'] as List?;
     if (candidates == null || candidates.isEmpty) {
-      throw Exception('Gemini returned an empty response. Content may be filtered.');
+      throw Exception(
+          'Gemini returned an empty response. Content may be filtered.');
     }
 
     final content = candidates[0]['content'] as Map?;
@@ -338,13 +429,11 @@ CRITICAL SUBTITLE TRANSLATION RULES:
     }
 
     final rawText = (parts[0]['text'] as String? ?? '').trim();
-    return _parseJsonResilient(rawText, batch);
+    return _parseJsonResilient(rawText);
   }
 
   /// Resilient parser: jsonDecode -> regex array match -> regex salvage parser.
-  /// Never throws on truncated or slightly malformed outputs.
-  List<Map<String, dynamic>> _parseJsonResilient(
-      String rawText, List<SubtitleSegment> expectedBatch) {
+  List<Map<String, dynamic>> _parseJsonResilient(String rawText) {
     if (rawText.isEmpty) return [];
 
     // Attempt 1: Standard JSON decode
@@ -354,10 +443,13 @@ CRITICAL SUBTITLE TRANSLATION RULES:
         return decoded
             .whereType<Map>()
             .map((m) => {
-                  'index': m['index'] is int ? m['index'] : int.tryParse('${m['index']}'),
+                  'index': m['index'] is int
+                      ? m['index']
+                      : int.tryParse('${m['index']}'),
                   'text': m['text']?.toString() ?? '',
                 })
-            .where((m) => m['index'] != null && (m['text'] as String).isNotEmpty)
+            .where((m) =>
+                m['index'] != null && (m['text'] as String).isNotEmpty)
             .toList();
       }
     } catch (_) {}
@@ -371,10 +463,13 @@ CRITICAL SUBTITLE TRANSLATION RULES:
           return decoded
               .whereType<Map>()
               .map((m) => {
-                    'index': m['index'] is int ? m['index'] : int.tryParse('${m['index']}'),
+                    'index': m['index'] is int
+                        ? m['index']
+                        : int.tryParse('${m['index']}'),
                     'text': m['text']?.toString() ?? '',
                   })
-              .where((m) => m['index'] != null && (m['text'] as String).isNotEmpty)
+              .where((m) =>
+                  m['index'] != null && (m['text'] as String).isNotEmpty)
               .toList();
         }
       } catch (_) {}

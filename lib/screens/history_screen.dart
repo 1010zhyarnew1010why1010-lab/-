@@ -24,6 +24,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   List<HistoryItem> _filteredItems = [];
   bool _isLoading = true;
   String _apiKey = '';
+  List<String> _apiKeys = [];
 
   @override
   void initState() {
@@ -41,6 +42,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         _allItems = items;
         _filteredItems = items;
         _apiKey = settings.geminiApiKey;
+        _apiKeys = settings.geminiApiKeys;
         _isLoading = false;
       });
     }
@@ -236,6 +238,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 builder: (_) => WatchScreen(
                   item: item,
                   apiKey: _apiKey,
+                  apiKeys: _apiKeys,
                   onRetranslate: () {
                     Navigator.pop(context);
                     if (widget.onRetranslateUrl != null) {

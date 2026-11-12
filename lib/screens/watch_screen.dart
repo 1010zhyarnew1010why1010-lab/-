@@ -12,6 +12,7 @@ class WatchScreen extends StatefulWidget {
   final HistoryItem item;
   final double subtitleFontSize;
   final String? apiKey;
+  final List<String>? apiKeys;
   final VoidCallback? onRetranslate;
 
   const WatchScreen({
@@ -19,6 +20,7 @@ class WatchScreen extends StatefulWidget {
     required this.item,
     this.subtitleFontSize = 16.0,
     this.apiKey,
+    this.apiKeys,
     this.onRetranslate,
   });
 
@@ -40,6 +42,9 @@ class _WatchScreenState extends State<WatchScreen> {
   String? _backgroundStatusText;
   bool _isBackgroundCancelled = false;
 
+  // Manual subtitle synchronization offset
+  Duration _subtitleOffset = Duration.zero;
+
   @override
   void initState() {
     super.initState();
@@ -52,8 +57,12 @@ class _WatchScreenState extends State<WatchScreen> {
   }
 
   void _checkAndStartBackgroundTranslation() {
-    final apiKey = widget.apiKey;
-    if (apiKey == null || apiKey.isEmpty) return;
+    final keys = widget.apiKeys != null && widget.apiKeys!.isNotEmpty
+        ? widget.apiKeys!
+        : (widget.apiKey != null && widget.apiKey!.isNotEmpty
+            ? [widget.apiKey!]
+            : <String>[]);
+    if (keys.isEmpty) return;
     if (widget.item.isFullyTranslated) return;
 
     final firstUntranslated = widget.item.segments.indexWhere(
@@ -67,7 +76,7 @@ class _WatchScreenState extends State<WatchScreen> {
     });
 
     final translationService = TranslationService(
-      apiKey: apiKey,
+      apiKeys: keys,
       dialect: widget.item.dialect,
       script: widget.item.script,
     );
@@ -75,7 +84,7 @@ class _WatchScreenState extends State<WatchScreen> {
     translationService.translateRemainingBatches(
       widget.item.segments,
       startIndex: firstUntranslated,
-      batchSize: 15,
+      batchSize: TranslationService.defaultBatchSize,
       videoTitle: widget.item.title,
       isCancelled: () => _isBackgroundCancelled || !mounted,
       onBatchComplete: (completed, total) {
@@ -112,18 +121,22 @@ class _WatchScreenState extends State<WatchScreen> {
       ),
     );
 
+    // 100ms interval for precise and responsive subtitle sync
     _positionTimer = Timer.periodic(
-      const Duration(milliseconds: 250),
+      const Duration(milliseconds: 100),
       (_) => _updateActiveSegment(),
     );
   }
 
   void _updateActiveSegment() {
     if (_controller == null || widget.item.segments.isEmpty) return;
-    final pos = _controller!.value.position;
+    final rawPos = _controller!.value.position;
+    final posMs = rawPos.inMilliseconds + _subtitleOffset.inMilliseconds;
+    final adjustedPos = Duration(milliseconds: posMs < 0 ? 0 : posMs);
+
     int found = -1;
     for (int i = 0; i < widget.item.segments.length; i++) {
-      if (widget.item.segments[i].isActiveAt(pos)) {
+      if (widget.item.segments[i].isActiveAt(adjustedPos)) {
         found = i;
         break;
       }
@@ -191,6 +204,36 @@ class _WatchScreenState extends State<WatchScreen> {
     super.dispose();
   }
 
+  Widget _buildOffsetButton({
+    required String label,
+    required VoidCallback onTap,
+    bool isReset = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: isReset ? Colors.white10 : AppTheme.cardSurface,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isReset ? Colors.white24 : AppTheme.goldBorder,
+            width: 0.8,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: isReset ? AppTheme.textMuted : AppTheme.goldPrimary,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final activeText = (_activeSegmentIndex >= 0 &&
@@ -205,13 +248,15 @@ class _WatchScreenState extends State<WatchScreen> {
         appBar: AppBar(
           title: const Text('سەیرکردن و هەڵگرتن'),
           leading: IconButton(
-            icon: const Icon(Icons.arrow_forward_rounded, color: AppTheme.textWhite),
+            icon: const Icon(Icons.arrow_forward_rounded,
+                color: AppTheme.textWhite),
             onPressed: () => Navigator.pop(context),
           ),
           actions: [
             if (widget.onRetranslate != null)
               IconButton(
-                icon: const Icon(Icons.refresh_rounded, color: AppTheme.goldPrimary),
+                icon: const Icon(Icons.refresh_rounded,
+                    color: AppTheme.goldPrimary),
                 tooltip: 'وەرگێڕانەوە',
                 onPressed: widget.onRetranslate,
               ),
@@ -260,7 +305,8 @@ class _WatchScreenState extends State<WatchScreen> {
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: AppTheme.cardSurface,
                       borderRadius: BorderRadius.circular(12),
@@ -323,6 +369,60 @@ class _WatchScreenState extends State<WatchScreen> {
                   ],
                 ),
               ),
+
+            // ── Subtitle Timing Offset Toolbar (Sync Controller) ────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              color: AppTheme.bgDarkNavy,
+              child: Row(
+                children: [
+                  const Icon(Icons.sync_rounded,
+                      size: 14, color: AppTheme.textMuted),
+                  const SizedBox(width: 6),
+                  Text(
+                    'هاوکاتکردن: ${_subtitleOffset.inMilliseconds >= 0 ? "+" : ""}${(_subtitleOffset.inMilliseconds / 1000).toStringAsFixed(1)}s',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.textMuted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  _buildOffsetButton(
+                    label: '-0.5s',
+                    onTap: () {
+                      setState(() {
+                        _subtitleOffset -= const Duration(milliseconds: 500);
+                        _updateActiveSegment();
+                      });
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  if (_subtitleOffset != Duration.zero) ...[
+                    _buildOffsetButton(
+                      label: 'ڕێکخستنەوە',
+                      isReset: true,
+                      onTap: () {
+                        setState(() {
+                          _subtitleOffset = Duration.zero;
+                          _updateActiveSegment();
+                        });
+                      },
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  _buildOffsetButton(
+                    label: '+0.5s',
+                    onTap: () {
+                      setState(() {
+                        _subtitleOffset += const Duration(milliseconds: 500);
+                        _updateActiveSegment();
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
 
             // ── Dual-Language Interactive Transcript List ────────────────
             Expanded(
@@ -449,32 +549,47 @@ class _WatchScreenState extends State<WatchScreen> {
               decoration: BoxDecoration(
                 color: AppTheme.cardSurface,
                 border: const Border(
-                  top: BorderSide(color: AppTheme.goldBorder, width: 1.0),
+                  top: BorderSide(color: Colors.white10, width: 1),
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.3),
+                    blurRadius: 10,
+                    offset: const Offset(0, -3),
+                  ),
+                ],
               ),
               child: Row(
                 children: [
                   Expanded(
-                    child: _buildActionButton(
+                    child: _buildExportButton(
                       label: 'هەڵگرتنی SRT',
-                      icon: Icons.subtitles_outlined,
-                      onTap: _isExporting ? null : _exportSrt,
+                      icon: Icons.subtitles_rounded,
+                      isLoading: _isExporting,
+                      onTap: _exportSrt,
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: _buildActionButton(
+                    child: _buildExportButton(
                       label: 'هەڵگرتنی VTT',
-                      icon: Icons.video_file_outlined,
-                      onTap: _isExporting ? null : _exportVtt,
+                      icon: Icons.closed_caption_rounded,
+                      isLoading: _isExporting,
+                      onTap: _exportVtt,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildActionButton(
-                      label: 'هاوبەشکردن',
-                      icon: Icons.share_rounded,
-                      onTap: _isExporting ? null : _exportSrt,
+                  const SizedBox(width: 10),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.share_rounded,
+                          color: AppTheme.goldPrimary),
+                      tooltip: 'هاوبەشکردن',
+                      onPressed: () =>
+                          _historyService.exportAndShareSrt(widget.item),
                     ),
                   ),
                 ],
@@ -486,37 +601,36 @@ class _WatchScreenState extends State<WatchScreen> {
     );
   }
 
-  Widget _buildActionButton({
+  Widget _buildExportButton({
     required String label,
     required IconData icon,
-    required VoidCallback? onTap,
+    required bool isLoading,
+    required VoidCallback onTap,
   }) {
-    return Material(
-      color: AppTheme.cardSurfaceLight,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppTheme.goldBorder.withOpacity(0.5)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: AppTheme.bgSecondaryNavy,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.goldBorder),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: isLoading ? null : onTap,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 20, color: AppTheme.goldPrimary),
-              const SizedBox(height: 4),
+              Icon(icon, size: 18, color: AppTheme.goldPrimary),
+              const SizedBox(width: 6),
               Text(
                 label,
                 style: const TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: FontWeight.bold,
                   color: AppTheme.textWhite,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),

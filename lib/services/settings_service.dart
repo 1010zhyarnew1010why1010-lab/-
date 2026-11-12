@@ -4,6 +4,7 @@ import '../models/app_settings.dart';
 
 class SettingsService {
   static const keyApiKey = 'gemini_api_key';
+  static const keyApiKeysList = 'gemini_api_keys_list';
   static const _keyFontSize = 'subtitle_font_size';
   static const _keyDialect = 'default_dialect';
   static const _keyScript = 'default_script';
@@ -12,11 +13,17 @@ class SettingsService {
 
   Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
-    final storedKey = prefs.getString(keyApiKey);
-    final sanitizedKey = AppSettings.sanitizeApiKey(storedKey);
+    final storedList = prefs.getStringList(keyApiKeysList);
+    List<String> keys;
+    if (storedList != null && storedList.isNotEmpty) {
+      keys = AppSettings.sanitizeApiKeys(storedList);
+    } else {
+      final storedSingle = prefs.getString(keyApiKey);
+      keys = AppSettings.sanitizeApiKeys(storedSingle);
+    }
 
     return AppSettings(
-      geminiApiKey: sanitizedKey,
+      geminiApiKeys: keys,
       subtitleFontSize: prefs.getDouble(_keyFontSize) ?? 16.0,
       defaultDialect: prefs.getString(_keyDialect) ?? 'sorani',
       defaultScript: prefs.getString(_keyScript) ?? 'arabic',
@@ -26,20 +33,32 @@ class SettingsService {
 
   Future<void> save(AppSettings settings) async {
     final prefs = await SharedPreferences.getInstance();
-    final cleanKey = AppSettings.sanitizeApiKey(settings.geminiApiKey);
-    await prefs.setString(keyApiKey, cleanKey);
+    final cleanKeys = AppSettings.sanitizeApiKeys(settings.geminiApiKeys);
+    await prefs.setStringList(keyApiKeysList, cleanKeys);
+    if (cleanKeys.isNotEmpty) {
+      await prefs.setString(keyApiKey, cleanKeys.first);
+    }
     await prefs.setDouble(_keyFontSize, settings.subtitleFontSize);
     await prefs.setString(_keyDialect, settings.defaultDialect);
     await prefs.setString(_keyScript, settings.defaultScript);
     await prefs.setDouble(_keyPlaybackSpeed, settings.playbackSpeed);
   }
 
-  /// Directly save or update just the API key (used by error card quick dialog)
-  Future<String> saveApiKey(String rawKey) async {
-    final cleanKey = AppSettings.sanitizeApiKey(rawKey);
+  /// Directly save or update API keys (can be String or List<String>)
+  Future<List<String>> saveApiKeys(dynamic raw) async {
+    final cleanKeys = AppSettings.sanitizeApiKeys(raw);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(keyApiKey, cleanKey);
-    return cleanKey;
+    await prefs.setStringList(keyApiKeysList, cleanKeys);
+    if (cleanKeys.isNotEmpty) {
+      await prefs.setString(keyApiKey, cleanKeys.first);
+    }
+    return cleanKeys;
+  }
+
+  /// Directly save or update a single API key (backwards compatible)
+  Future<String> saveApiKey(String rawKey) async {
+    final cleanKeys = await saveApiKeys(rawKey);
+    return cleanKeys.first;
   }
 
   /// Save a translated transcript to cache keyed by video ID.

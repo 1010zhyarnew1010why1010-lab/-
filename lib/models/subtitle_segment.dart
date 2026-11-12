@@ -2,7 +2,7 @@
 class SubtitleSegment {
   final int index;
   final Duration start;
-  final Duration duration;
+  Duration duration;
   final String originalText;
   String? translatedText;
 
@@ -15,9 +15,16 @@ class SubtitleSegment {
   });
 
   Duration get end => start + duration;
+  set end(Duration newEnd) {
+    if (newEnd > start) {
+      duration = newEnd - start;
+    } else {
+      duration = Duration.zero;
+    }
+  }
 
   bool isActiveAt(Duration position) {
-    return position >= start && position <= end;
+    return position >= start && position < end;
   }
 
   Map<String, dynamic> toTranslationJson() => {

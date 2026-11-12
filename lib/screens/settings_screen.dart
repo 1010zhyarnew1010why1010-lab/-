@@ -35,8 +35,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _apiKeyController =
-        TextEditingController(text: widget.currentSettings.geminiApiKey);
+    final initialKeys = widget.currentSettings.geminiApiKeys.join('\n');
+    _apiKeyController = TextEditingController(text: initialKeys);
     _fontSize = widget.currentSettings.subtitleFontSize;
     _dialect = widget.currentSettings.defaultDialect;
     _script = widget.currentSettings.defaultScript;
@@ -51,7 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _saveSettings() async {
     setState(() => _isSaving = true);
     final updated = widget.currentSettings.copyWith(
-      geminiApiKey: _apiKeyController.text.trim(),
+      geminiApiKeys: _apiKeyController.text.trim(),
       subtitleFontSize: _fontSize,
       defaultDialect: _dialect,
       defaultScript: _script,
@@ -151,7 +151,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           size: 20, color: AppTheme.goldPrimary),
                       SizedBox(width: 8),
                       Text(
-                        'کلیلی Gemini API',
+                        'کلیلەکانی Gemini API (پشتیوانی فرە-کلیل)',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -162,19 +162,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'بۆ وەرگێڕانی زیرەکی دەستکرد بە خێرایی باڵا، کلیلی فەرمی Gemini پێویستە (بێبەرامبەرە).',
+                    'دەتوانیت یەک یان چەندین کلیلی Gemini لێرە بنووسیت (بە دێڕی نوێ یان فاریزە جیاکراوە). بەرنامەکە لە کاتی تەواوبوونی پشک (Quota) خۆکارانە لە نێوان کلیلەکان و مۆدێلەکان دەگۆڕێت.',
                     style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: _apiKeyController,
                     obscureText: _obscureKey,
+                    maxLines: _obscureKey ? 1 : 3,
+                    minLines: 1,
                     style: const TextStyle(
                         fontFamily: 'monospace',
                         color: AppTheme.textWhite,
                         fontSize: 13),
                     decoration: InputDecoration(
-                      hintText: 'AQ... یان AIzaSy...',
+                      hintText: 'کلیلەکان بە دێڕی نوێ بنووسە...',
                       hintStyle:
                           const TextStyle(color: Colors.white24, fontSize: 13),
                       filled: true,

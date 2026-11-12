@@ -291,7 +291,7 @@ class YoutubeService {
 
       if (res.statusCode == 200 && res.body.trim().isNotEmpty) {
         final segments = _parseJson3(res.body);
-        if (segments.isNotEmpty) return segments;
+        if (segments.isNotEmpty) return _cleanAndMergeSegments(segments);
       }
     } catch (_) {}
 
@@ -307,7 +307,7 @@ class YoutubeService {
 
       if (res.statusCode == 200 && res.body.trim().isNotEmpty) {
         final segments = _parseXmlRegex(res.body);
-        if (segments.isNotEmpty) return segments;
+        if (segments.isNotEmpty) return _cleanAndMergeSegments(segments);
       }
     } catch (_) {}
 
@@ -325,11 +325,111 @@ class YoutubeService {
 
       if (res.statusCode == 200 && res.body.trim().isNotEmpty) {
         final segments = _parseXmlRegex(res.body);
-        if (segments.isNotEmpty) return segments;
+        if (segments.isNotEmpty) return _cleanAndMergeSegments(segments);
       }
     } catch (_) {}
 
     return [];
+  }
+
+  /// Cleans noise tags, merges ultra-short auto-caption fragments, and clamps overlapping timestamps
+  List<SubtitleSegment> _cleanAndMergeSegments(List<SubtitleSegment> raw) {
+    if (raw.isEmpty) return [];
+
+    final noisePattern = RegExp(
+      r'(\[[^\]]+\]|\([^\)]+\)|[♪♫#*]+)',
+      caseSensitive: false,
+    );
+
+    // 1. Filter out empty or noise-only segments
+    final List<SubtitleSegment> cleaned = [];
+    for (final seg in raw) {
+      var text = seg.originalText
+          .replaceAll('\r\n', ' ')
+          .replaceAll('\n', ' ')
+          .replaceAll(noisePattern, '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+
+      if (text.isEmpty) continue;
+
+      cleaned.add(SubtitleSegment(
+        index: cleaned.length,
+        start: seg.start,
+        duration: seg.duration,
+        originalText: text,
+      ));
+    }
+
+    if (cleaned.isEmpty) return [];
+
+    // 2. Merge ultra-short consecutive auto-caption fragments
+    final List<SubtitleSegment> merged = [];
+    SubtitleSegment current = cleaned.first;
+
+    final terminalPunctuation = RegExp(r'[\.\?\!\;\:\u061F\u06D4]$');
+
+    for (int i = 1; i < cleaned.length; i++) {
+      final next = cleaned[i];
+      final currentWords = current.originalText.split(RegExp(r'\s+')).length;
+      final nextWords = next.originalText.split(RegExp(r'\s+')).length;
+      final gapMs = (next.start.inMilliseconds - current.end.inMilliseconds);
+      final hasTerminal =
+          terminalPunctuation.hasMatch(current.originalText.trim());
+
+      final isCurrentShort =
+          current.duration.inMilliseconds < 1800 || currentWords < 4;
+      final canMerge = !hasTerminal &&
+          (currentWords + nextWords <= 14) &&
+          ((next.end.inMilliseconds - current.start.inMilliseconds) <= 5500) &&
+          gapMs >= -500 &&
+          gapMs <= 1200;
+
+      if (isCurrentShort && canMerge) {
+        // Merge next into current
+        final combinedText =
+            '${current.originalText} ${next.originalText}'.trim();
+        final newEnd = next.end > current.end ? next.end : current.end;
+        current = SubtitleSegment(
+          index: merged.length,
+          start: current.start,
+          duration: newEnd - current.start,
+          originalText: combinedText,
+        );
+      } else {
+        merged.add(current);
+        current = next;
+      }
+    }
+    merged.add(current);
+
+    // 3. Re-index and Clamp Overlapping Timestamps
+    final List<SubtitleSegment> result = [];
+    for (int i = 0; i < merged.length; i++) {
+      final seg = SubtitleSegment(
+        index: i,
+        start: merged[i].start,
+        duration: merged[i].duration,
+        originalText: merged[i].originalText,
+      );
+
+      if (i < merged.length - 1) {
+        final nextStart = merged[i + 1].start;
+        if (seg.end > nextStart) {
+          // Clamp so it ends exactly when the next subtitle starts!
+          seg.end = nextStart;
+        }
+      }
+
+      // Ensure minimal duration if clamped too short
+      if (seg.duration.inMilliseconds < 500) {
+        seg.duration = const Duration(milliseconds: 500);
+      }
+
+      result.add(seg);
+    }
+
+    return result;
   }
 
   /// Parses JSON3 caption format
